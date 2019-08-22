@@ -1,0 +1,120 @@
+输入操作是从I/O设备复制数据到主存， 输出操作是从主存复制数据到I/O设备。
+
+1.UnixI/O
+
+*打开文件   内核返回一个描述符，他在后续对此文件的所有操作中标识这个文件。
+*Linxu shell创建的每个进程开始时都有三个打开的文件：标准输入(0),标准输出(1),标准错误(2)
+*改变当前文件位置 
+*读写文件
+*关闭文件
+
+
+2.文件
+*普通文件： 文本文件/二进制文件。
+	文本文件是只含有ASCII或Unicode字符的普通文件。二进制文件是其他所有文件
+*目录： 包含一组链接的文件
+*套接字： 用来与另一个进程进行跨网络通信的文件
+
+3.打开和关闭文件
+
+打开：
+int open(char *filename, int flags, mode_t mode); 若成功返回新的文件描述付，若出错返回-1.
+
+flags参数
+	O_RDONLY: 只读。
+	O_WRONLY: 只写。
+	O_RDWR  : 读写。
+	O_CREATE: 若文件不存在，就创建一个
+	O_TRUNC : 若文件已经存在，截断它
+	O_APPEND: 在每次操作前，设置文件位置到结尾处。
+
+mode参数
+	S_IRUSR: 使用者读
+	S_IWUSR: 使用者写
+	S_IXUSR: 使用者执行
+	将USR变成GRP,OTH代表组，其他人。
+	S_IRGRP...
+
+int fd = open("...", O_RDWR|O_APPEND, S_IRUSR|S_IXUSR|S_IWUSR);
+
+关闭：
+close(fd);
+
+4.读写文件
+#include <unistd.h>
+ssize_t read(int fd, void *buf, size_t n); //若成功则为读的字节数，若EOF则为0,若出错为-1
+
+ssize_t write(int fd, const void *buf, size_t n); //成功为写的字节数，出错为-1
+
+
+5.读取文件元数据
+应用程序能够通过调用stat和fstat函数，检索到关于文件的信息
+
+#include <unistd.h>
+#include <sys/stat.h>
+
+int stat(const char *filename, struct stat* buf);
+int fstat(int fd, struct stat *buf);
+
+int main(int argc, char **argv)
+{
+	struct stat stat;
+	char *type;
+	stat(argv[1], &stat);
+	if(S_ISREG(stat.st_mode))
+		type = "regular";
+	else if(S_ISDIR(stat.st_mode))
+		type = "directory";
+}
+
+6.读取目录内容
+#include <sys/types.h>
+#include <dirent.h>
+
+打开
+DIR *opendir(const char *name);
+函数opendir以路径名为参数，返回指向目录流的指针。流是对条目有序列表的抽象。
+
+读
+struct dirent *readdir(DIR *dirp);
+
+struct dirent {
+	ino_t d_ino;	    //inode number
+	char d_name[256];   //File name
+};
+
+关闭
+int closedir(DIR *dirp);
+
+
+7.共享文件
+内核用三个相关的数据结构来表示打开的文件：
+*描述符表： 每个进程都有他独立的描述符表，它的表项是由进程打开的文件描述符来索引的。
+	   
+*文件表  ： 打开的文件的集合是由一张文件表来表示的，所有的进程共享这张表。
+	    每个文件表的表项组成包括当前的文件位置，引用计数（指向该表项的描述符表项数），以及一个指向v-node表中对应表项的指针。
+	    
+*v-node表 ： 所有进程共享这张v-node表。每个表项包含stat结构中的大多数信息。
+
+fork一个子进程中，子进程的描述符表指向的文件表和父进程一样，引用计数+1.
+
+8. I/O重定向
+
+Linxu shell 提供了I/O重定向操作符，允许用户将磁盘文件和标准输入输出联系起来。
+ls > foo.txt
+shell加载执行ls程序，将标准输出重定向到磁盘文件foo.txt
+
+#include <unistd.h>
+int dup2(int oldfd, int newfd);
+dup2函数复制描述符表表项oldfd到描述符表表项newfd,覆盖描述符表项newfd以前的内容，如果newfd已经打开了，dup2会在复制之前关闭newfd.
+
+
+9.标准I/O
+C语言定义了一组高级输入输出函数，称为标准I/O库。
+fopen, fclose, fread, fwrite, fgets, fputs, scanf, printf.
+
+
+
+
+
+
