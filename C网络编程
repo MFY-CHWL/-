@@ -1,0 +1,683 @@
+1.客户端-服务器编程模型
+每个网络应用都是基于客户端-服务器模型的
+1)客户端发起请求
+2)服务器收到请求，释放它，处理请求
+3)服务器发送给客户端一个响应
+4)客户端收到相应并处理
+
+客户端和服务器是进程，而不是常提到的机器或者主机。
+
+
+
+2.网络
+客户端和服务器通常运行在不同的主机上，并且通过计算机网络的硬件和软件资源来通信。
+
+对于主机而言，网络只是又一种IO设备，是数据源和数据接收方。
+
+以太网是最流行的局域网(LAN)技术，一个以太网端包括一些电缆和一个叫做集线器的小盒子。
+以太网中的注意可以发送一段位（帧）到这个网段内的其他任何主机，帧包括一些固定数量的头部位，标识此帧的源和目的地址以及此帧的长度，随后紧随的是有效载荷。
+
+使用一些电缆和叫网桥的小盒子，多个以太网段可以连接成较大的局域网，成为桥接以太网。
+
+在层次更高的级别当中，多个不兼容的局域网可以通过叫路由器的特殊计算机连接起来，组成一个互联网。
+
+
+互联网至关重要的特性是，它能由采用完全不同和不兼容的技术的各种局域网和广域网做成。
+
+解决的方法是一层运行在每台主机和路由器上的协议软件来协同工作实现数据传输
+这个协议软件必须有两种基本能力：
+1)命名机制。 ip
+2)传送机制。 在电缆上编码位和将这些位封装成帧方面，不同的联网技术有不同的和不兼容的方式。
+互联网协议通过定义一种把数据位捆扎成不连续的片(包)的统一方式，从而消除了这些差异。一个包由包头和有效载荷组成，包头包括包的大小以及源主机和目的主机的地址，有效载荷包括从源主机发出的数据位。
+
+
+两台在不同局域网的主机的发送数据的过程
+1)A客户端进行系统调用，从客户端的虚拟地址空间复制数据到内核缓冲区
+2)主机A上的协议软件通过在数据前附加互联网络包头和LAN1帧头，创建了一个LAN1帧。LAN1帧的有效载荷是一个互联网络包，而互联网络包的有效载荷是实际的用户数据。这种封装是基本的网络互联方法之一。
+3)LAN1适配器赋值该帧到网络上
+4)当此帧到达路由器时，路由器的LAN1适配器从电缆上读取它，并把他传送到协议软件。
+5)路由器从互联网络包头中提取出目的互联网络地址，并用它作为路由表的索引，确定向哪里转发这个包。然后剥落旧的LAN!帧头，加上寻址到的LAN2帧头，并把得到的帧传送到适配器。
+6)路由器的LAN@适配器复制该帧到网络上
+7)当此帧到达主机B时，它的适配器从电缆上读到此帧，并将他传送到协议软件。
+8)主机B上的协议软件剥落包头和帧头。当服务器进行一个读取这些数据的系统调用是，协议软件最终将得到的数据复制到服务器的虚拟地址空间。
+
+
+3.全球IP因特网
+套接字函数实现为系统调用，协议软件为TCP/IP(内核代码)
+TCP/IP实际是一个协议族，其中每一个都提供不同的功能，IP协议提供基本的命名机制和递送机制（数据报）。
+IP机制从某种意义上是不可靠的，当数据报在网络中丢失或者重复，他并不会试图恢复。
+UDP(Unreliable Datagram Protocol,不可靠数据报协议）稍微拓展了IP协议，这样来，包可以在进程间而不是在主机间传送。
+TCP是一个构建在IP之上的复杂协议，提供了进程间可靠的双全工（双向的）连接。
+
+
+3.1IP地址
+struct in_addr {
+	uint32_t s_addr; //网络字节顺序为大端字节顺序
+}
+
+htonl 将32位整数由主机字节顺序转换为网络字节顺序
+ntohl 讲32位整数由网络字节顺序转换为主机字节顺序
+
+int inet_pton(AF_INET, const char* src, void* dst);
+若成功为1,若src为非法点十进制为0,出错-1
+const char* inet_htop(AF_INET, const void* src, char *dst, socklen_t size);
+成功返回指向点十进制字符串的指针，出错为NULL
+
+
+3.2因特网域名
+nslookup程序可以查询域名对应的ip地址
+
+3.3因特网连接
+点对点（一对进程），双全工（数据可以同时双向流动），可靠的。
+
+套接字是连接的一个端点。每个套接字都有相应的套接字地址，是由一个因特网地址和一个16位整数端口组成。“地址：端口”。
+
+服务端套接字地址中的端口通常是某个知名端口Web 80
+同时每个具有知名端口的服务都会有一个对应的知名的服务名
+Web -> http, emali -> smtp.
+文件/etc/services包含一张这台机器提供的知名名字和知名端口的映射。
+一个连接是由它两端的套接字地址唯一确定的。称为套接字对
+(cliaddr:cliport, seraddr:servport)
+
+
+4.套接字接口
+4.1套接字地址结构
+//IP socket address structure
+struct sockaddr_in {
+	uint16_t sin_family;    /Protocol family(always AF_INET)
+	uint16_t sin_port;	/Port number in network byte orde
+	struct in_addr sin_addr;/IP address in network byte order
+	unsigned char sin_zero[8];/Pad to sizeof(struct sockaddr)
+};
+
+//Generic socket address sturcture (for connect, bind and accept)
+struct sockaddr {
+	uint16_t sa_family;
+	char     sa_data[14];
+}
+
+typedef struct sockaddr SA;
+
+4.2 socket函数
+
+int socket(int domain, int type, int protocol);
+
+若成功返回非负描述符，若出错则为-1.
+
+clientfd = socket(AF_INET, SOCK_STREAM, 0);
+AF_INET表示32为IP地址，SOCK_STREAM表示这个套接字是连接的一个端点，0表示协议族种类。
+
+
+4.3 connect函数
+
+int connect(int clientfd, const struct sockaddr* addr, socklen_t addrlen);
+
+成功为0,出错-1.
+connect函数试图与套接字地址为addr的服务器建立一个因特网连接，其中addrlen是sizeof(sockaddr_in)。
+
+4.4 bind函数
+
+int bind(int clientfd, const struct sockaddr* addr, socklen_t addrlen);
+
+成功为0,出错-1.
+
+bind函数告诉内核将addr中的服务器套接字地址和套接字描述符sockfd联系起来。
+
+4.5 listen函数
+
+int listen(int sockfd, int backlog)
+
+成功为0,出错-1.
+
+服务器调用listen函数告诉内核，描述符是被服务器而不是客户端使用的。
+
+listen函数将sockfd从一个主动套接字转化为一个监听套接字，该套接字可以接受来自客户端的连接请求。
+backlog参数暗示了内核在开始拒绝连接请求之前，队列中要排队的未完成的连接请求的数量。
+
+4.6 accept函数
+
+int accept(int listenfd, struct sockaddr* addr, int *addrlen);
+
+成功为非负连接描述符,出错-1
+
+4.7主机和服务的转换
+
+独立于任何特定版本的IP协议的网络程序
+
+4.7.1 getaddrinfo函数
+
+struct addrinfo{
+	int 		 ai_flags;
+	int		 ai_family;
+	int 		 ai_socktype;
+	int 		 ai_protocol;
+	char 		 *ai_cannonname;
+	size_t 		 ai_addrlen;
+	struct 	SA* 	 ai_addr;
+	struct addrinfo* ai_next;
+
+
+
+int getaddrinfo(const char* host, const char* service,
+		const struct addrinfo *hints,
+		struct addrinfo **result);
+成功为0,错误非0的错误代码
+
+void freeaddrinfo(struct addrinfo *result);
+
+const char* gai_strerror(int errcode);
+返回错误消息
+
+
+getaddrinfo函数将主机名，主机地址，服务名和端口号的字符串表示转化为套接字地址结构。
+host为主机地址，service为端口号，result为返回值，指向一个对应于host和service的套接字地址结构。
+
+如果要传递hints参数，只能设置下列字段：
+ai_family,ai_socktype, ai_protocal,ai_flags.
+ai_family = AF_INET;
+ai_socktype = SOCK_STREAM;
+ai_flags字段是一个位掩码
+AI_ADDRCONFIG 当主机地址为IPv4时，getaddrinfo返回IPv4地址
+AI_CANONNAME  告诉getaddrinfo将列表中第一个addrinfo结构的ai_canonname字段指向host的权威名字
+AI_NUMERICSERV 强制service为端口号，不能为服务名(80 http)
+AI_PASSIVE      这个标志告诉函数，返回的套接字地址可能被用做监听套接字。此种情况下host为NULL.
+
+4.7.2 getnameinfo函数
+
+int getnameinfo(const struct SA* sa, socklen_t salen,
+		char *host, size_t hostlen,
+		char *service, size_t servlen, int flags);
+若成功则为0,如果错误则为非零的错误代码。
+
+sa指向大小为salen的套接字地址结构。
+host指向大小为hostlen字节的缓冲区。
+service指向大小为servlen字节的缓冲区。
+如果不想要主机名，可以把host设置为NULL,hostlen设置为0。对服务字段来说也是一样。
+flags是一个位掩码
+NI_NUMBERICHOST getnameinfo默认试图返回host中的域名。设置该标志会使该函数返回一个数字地址字符串
+NI_NUMBERICSERV getnameinfo默认检查/etc/services，如果可能返回服务器名而不是端口名。该标志表示直接返回端口号。
+
+
+类似nslookup程序的实现
+#include "csapp.h"
+
+int main(int argc, char **argv)
+{
+    struct addrinfo *p, *listp, hints;
+    char buf[MAXLINE];
+    int rc,flags;
+
+    if(argc != 2) {
+        fprintf(stderr, "usage: %s <domain  name>\n", argv[0]);
+        exit(0);
+    }
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if((rc = getaddrinfo(argv[1], NULL, &hints, &listp) != 0)) {
+        fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(rc));
+        exit(1);
+    }
+
+    flags = NI_NUMERICHOST;
+    for(p = listp; p; p = p->ai_next) {
+        getnameinfo(p->ai_addr, p->ai_addrlen, buf, MAXLINE, NULL, 0, flags);
+        printf("%s\n", buf);
+    }
+
+    freeaddrinfo(listp);
+
+    exit(0);
+}
+
+4.8 套接字接口辅助函数
+
+int open_clientfd(char* hostname, char* port);
+若成功返回描述符，否则-1;输入为服务器的主机名和端口号
+
+int open_clientfd(char* hostname, char* port) {
+	int clientfd;
+	struct addrinfo hints, *listp, *p;
+	
+	memset(&hints, 0, sizeof(struct addrinfo);
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_NUMBERICSERV;
+	hints.ai_flags |= AI_ADDRCONFIG;
+	getaddrinfo(hostname, port, &hint, &listp);
+	
+	for(p = listp; p; p = p->ai_next) {
+		if((clienfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) < 0)
+			continue;
+		if(connect(clientfd, p->ai_addr, p->ai_addrlen) != -1)
+			break;
+		close(clientfd);
+	}
+
+	freeaddrinfo(listp);
+	if(!p) return -1;
+	return clientfd;
+}
+
+
+int open_listenfd(char* port);
+若成功返回描述符，出错返回-1
+
+int open_listenfd(char *port)
+{
+	struct addrinfo hints, *listp, *p;
+	int listenfd, optval = 1;
+	
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_PASSIVE | AI_ADDRCONFIG;
+	hints.ai_flags |= AI_NUMBERICSERV;
+	getaddrinfo(NULL, port, &hint, &listp);
+	
+	for(p = listp; p; p = p->ai_next) {
+		if((listenfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) < 0)
+			continue;
+		setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval, sizeof(int));
+		if(bind(listenfd, p->ai_addr, p->addrlen) == 0)
+			break;
+		close(listenfd);
+	}
+	
+	freeaddrinfo(listp);
+	if(!p)
+		return -1;
+	
+	if(listen(listenfd, LISTENQ) < 0) {
+		close(listenfd);
+		return -1;
+	}
+	
+	return listenfd;
+}
+
+
+4.9 echo客户端和服务器示例
+
+echo客户端主程序
+#include "csapp.h"
+
+int main(int argc, char **argv)
+{
+	int clientfd;
+	char *host, *port, buf[MAXLINE];
+	rio_t rio;
+	
+	if(argc != 3) {
+		fprintf(stderr, "usage: %s <host> <port>\n", argv[0]);
+		exit(0);
+	}
+	host = argv[1];
+	port = argv[2];
+	
+	clientfd = open_clienfd(host, port);
+	rio_readinit(&rio, clientfd);
+	
+	while(fgets(buf, MAXLINE, stdin) != NULL) {
+		rio_writen(clientfd, buf, strlen(buf));
+		rio_readlineb(&rio, buf, MAXLINE);
+		fputs(buf, stdout);
+	}
+	close(clientfd);
+	exit(0);
+}
+
+echo服务器
+#include "csapp.h"
+
+void echo(int connfd)
+{
+	size_t n;
+	char buf[MAXLINE];
+	rio_t rio;
+
+	rio_readinitb(&rio, connfd);
+	while((n = rio_readlineb(&rio, buf, MAXLINE)) != 0) {
+		printf("server received %d bytes\n", (int)n);
+		rio_writen(connfd, buf, n);
+	}
+}
+
+int main(int argc, char **argv)
+{
+	int listenfd, connfd;
+	socklen_t clientlen;
+	struct sockaddr_storage clientaddr;
+	char clien_hostname[MAXLINE], client_port[MAXLINE];
+	
+	if(argc != 2) {
+		fprintf(stderr, "usage: %s <port>\n", argv[0]);
+		exit(0);
+	}
+	
+	listenfd = open_listenfd(argv[1]);;
+	while(1) {
+		clientlen = sizeof(struct sockaddr_storage);
+		connfd = accept(listenfd, (SA*)&clientaddr, &clientlen);
+		getnameinfo((SA*) &clientaddr, clientlen,client_hostname, MAXLINE,
+				client_port, MAXLINE, 0);
+		printf("Connected to (%s, %s)\n", client_hostname, client_port);
+		echo(connfd);
+		close(connfd);
+	}
+	exit(0);
+}
+
+
+5.Web服务器
+
+5.1Web基础
+	Web客户端和服务器之间的交互用的是一个基于文本的应用级协议，叫做HTTP。
+	Web服务与常规的文件检索服务(FTP)的区别在于Web内容可以用一种叫做HTML的语言来编写。
+
+5.2Web内容
+	内容是与一个MIME(Multipurpose Internet Mail Extensions,多用途的网际邮件扩充协议）类型相关的字节序列。
+	MIME类型			描述
+	text/html			HTML页面
+	text/plain			无格式文本
+	application/postscript		Postscript文档
+	image/gif			GIF格式编码的二进制图像
+	image/png			PNG格式编码的二进制图像
+	image/jpeg			JPEG格式编码的二进制突袭那个
+
+Web服务器以两种不同的方式向客户端提供内容：
+*取一个磁盘文件，并将他的内容返回给客户端。磁盘文件称为静态内容，而返回文件给客户端的过程称为服务静态内容。
+*运行一个可执行文件，并将它的输出返回给客户端。运行时可执行文件产生的输出成为动态内容。
+
+URL
+http://www.google.com:80/index.html
+表示因特网主机www.google.com上一个称为/index.html的HTML文件，他是由一个监听端口80的Web服务器管理的。
+
+http://bluefish.ics.cs.cmu.edu:8000/cgi-bin/adder?15000&213
+标识了一个叫做/cgi-bin/adder的可执行文件，会带两个参数字符串15000和213来调用他。
+
+
+5.3HTTP事务
+可以使用Linux的telnet程序来和因特网上任何Web服务器执行事务。
+
+5.3.1HTTP请求
+一个HTTP请求由请求行和0个或者多个请求报头组成，在跟随一个空的文本行来终止报头列表。
+
+method URI version
+
+method 属于 {GET,POST,OPTIONS,HEAD,PUT,DELETE,TRACE}
+GET方法指导服务器生成和返回URI标识的内容。
+
+URI是URL的后缀，包括文件名和可选参数。
+
+version 属于 {HTTP/1.1, HTTP/1.0}
+HTTP/1.1定义了一些附加的报头，为缓冲和安全等高级特性提供支持，它还支持一种机制，允许客户端和服务器在同一条持久连接上执行多个事务。
+
+5.3.2 HTTP响应
+一个响应行后面跟随零个或者更多的响应报头，再跟随一个终止报头的空行，再跟随一个响应主体。
+
+响应行的格式
+version status-code status-message
+
+
+状态代码 	状态消息		描述
+200		成功			处理请求无误
+301		永久移动		内容以移动到location头中指明的主机上
+400		错误请求		服务器不能理解请求
+403		禁止			服务器无权访问所请求的文件
+404		未发现			服务器不能找到所请求的文件
+501		未实现			服务器不支持请求的方法
+505		HTTP版本不支持		服务器不支持请求的版本
+
+
+5.4 服务动态内容
+
+1.客户端如何将程序参数传递给服务器
+
+GET请求的参数在URI中传递。一个"?"字符分隔了文件名和参数，而每个参数都用一个“&”字符分隔开。参数中不允许有空格，而必须用字符串“%20”来表示。
+
+HTTP POST请求的参数是在请求主体中而不是URI中传递的。
+
+2.服务器如何将参数传递给子进程
+在服务器收到一个如下的请求后
+
+GET /cgi-bin/adder?15000&213 HTTP/1.1
+
+他调用fork来创建一个子进程，并调用execve在子进程的上下文中执行/cgi-bin/adder程序
+向adder这样的程序，常常被称为CGI（通用网关接口）程序，因为遵循CGI标准的规则。
+在调用execve之前，子进程讲CGI环境变量QUERY_STRING设置为"15000&213",adder程序在运行时可以用Linuxgetenv函数来引用它。
+
+3.服务器如何将其他信息传递给子进程
+CGI定义了大量的其他环境变量，一个CGI程序在他运行时可以设置这些环境变量。
+环境变量			描述
+QUERY_STRING			程序参数
+SERVER_PORT			父进程侦听的端口
+REQUEST_METHOD			GET或POST
+REMOTE_HOTS			客户端的域名
+REMOTE_ADDR			客户端的点分十进制IP地址
+CONTENT_TYPE			只对POST而言：请求体的MIME类型
+CONTENT_LENGTH			只对POST而言：请求体的字节大小
+
+
+4.子进程将输出发送到哪里
+发送到标准输出，在子进程加载并运行CGI程序之前，它使用Linux dup2函数将标准输出重定向到和客户端相关联的已连接描述符。
+
+下面是一个简单的GUI程序，对两个参数求和，并返回带结果的HTML文件给客户端。
+
+#include "csapp.h"
+
+int main(void) {
+    char *buf, *p;
+    char arg1[MAXLINE], arg2[MAXLINE], content[MAXLINE];
+    int n1=0, n2=0;
+
+    if((buf = getenv("QUERY_STRING")) != NULL){
+        p = strchr(buf, '&');
+        *p = '\0';
+        strcpy(arg1, buf);
+        strcpy(arg2, p+1);
+        n1 = atoi(arg1);
+        n2 = atoi(arg2);
+    }
+
+    sprintf(content, "QUERY_STRING=%s", buf);
+    sprintf(content, "Welcome to add.com: ");
+    sprintf(content, "%sTHE Internet addition portal.\r\n<p>", content);
+    sprintf(content, "%sTHE answer is: %d + %d = %d\r\n<p>", content, n1, n2, n1+n2);
+    sprintf(content, "%sThanks for visiting!\r\n", content);
+    
+    printf("Connection: close\r\n");
+    printf("Content-length: %d\r\n", (int)strlen(content));
+    printf("Content-type: text/html\r\n\r\n");
+    printf("%s",content);
+    fflush(stdout);
+    
+    exit(0);
+}
+
+5.5一个Web服务器
+#include "csapp.h"
+
+void doit(int fd);
+void read_requesthdrs(rio_t *rp);
+int parse_uri(char* uri, char* filename, char* cgiargs);
+void serve_static(int fd, char* filename, int filesize);
+void get_filetype(char* filename, char* filetype);
+void serve_dynamic(int fd, char* filename, char* cgiargs);
+void clienterror(int fd, char* cause, char* errnum, char* shortmsg, char* longmsg);
+
+int main(int argc, char **argv)
+{
+    int listenfd, connfd;
+    char hostname[MAXLINE], port[MAXLINE];
+    socklen_t clientlen;
+    struct sockaddr_storage clientaddr;
+
+    if(argc != 2) {
+        fprintf(stderr, "usage: %s <port>\n", argv[0]);
+        exit(1);
+    }
+
+    listenfd = Open_listenfd((int)reinterpret_cast<long>(argv[1]));
+
+    while(1) {
+        clientlen = sizeof(clientaddr);
+        connfd = Accept(listenfd, (SA*)&clientaddr, &clientlen);
+        getnameinfo((SA*)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
+        printf("Accepted connection from (%s, %s)\n", hostname, port);
+        doit(connfd);
+        close(connfd);
+    }
+}
+
+void doit(int fd)
+{
+    int is_static;
+    struct stat sbuf;
+    char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
+    char filename[MAXLINE], cgiargs[MAXLINE];
+    rio_t rio;
+
+    Rio_readinitb(&rio, fd);
+    Rio_readlineb(&rio, buf, MAXLINE);
+    printf("Request headers:\n");
+    printf("%s",buf);
+    sscanf(buf, "%s %s %s", method, uri, version);
+    if(strcasecmp(method, "GET")) {
+        clienterror(fd, method, "501", "Not implement",
+                "Tiny does not implement this method");
+        return ;
+    }
+    read_requesthdrs(&rio);
+
+    is_static = parse_uri(uri, filename, cgiargs);
+    if(stat(filename, &sbuf) < 0) {
+        clienterror(fd, filename, "404", "Not found",
+                "Tiny couldn't find this file");
+        return;
+    }
+
+    if(is_static) {
+        if(!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
+            clienterror(fd, filename, "403", "Forbidden",
+                    "Tiny couldn't read the file");
+            return;
+        }
+        serve_static(fd, filename, sbuf.st_size);
+    }
+    else {
+        if(!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
+            clienterror(fd, filename, "403", "Forbidden",
+                    "Tiny couldn't run the CGI program");
+            return;
+        }
+        serve_dynamic(fd, filename, cgiargs);
+    }
+}
+
+void clienterror(int fd, char* cause, char* errnum, char* shortmsg, char* longmsg)
+{
+    char buf[MAXLINE], body[MAXLINE];
+    sprintf(body, "<html><title>Tiny Error</title>");
+    sprintf(body, "%s<body bgcolor=""ffffff"">\r\n", body);
+    sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
+    sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
+    sprintf(body, "%s<hr><em>The Tiny Web server</em>\r\n", body);
+
+    sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
+    Rio_writen(fd, buf, strlen(buf));
+    sprintf(buf, "Content-type: text/html\r\n");
+    Rio_writen(fd, buf, strlen(buf));
+    sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
+    Rio_writen(fd, buf, strlen(buf));
+    Rio_writen(fd, body, strlen(body));
+}
+
+void read_requesthdrs(rio_t *rp){
+    char buf[MAXLINE];
+
+    Rio_readlineb(rp, buf, MAXLINE);
+    while(strcmp(buf, "\r\n")) {
+        Rio_readlineb(rp, buf, MAXLINE);
+        printf("%s", buf);
+    }
+    return;
+}
+
+int parse_uri(char* uri, char* filename, char* cgiargs){
+    char *ptr;
+
+    if(!strstr(uri, "cgi-bin")){
+        strcpy(cgiargs, "");
+        strcpy(filename, ".");
+        strcat(filename, uri);
+        if(uri[strlen(uri)-1] == '/')
+            strcat(filename, "home.html");
+        return 1;
+    }
+    else {
+        ptr = index(uri, '?');
+        if(ptr){
+            strcpy(cgiargs, ptr+1);
+            *ptr = '\0';
+        }
+        else strcpy(cgiargs, "");
+        strcpy(filename, ".");
+        strcat(filename, uri);
+        return 0;
+    }
+}
+
+void serve_static(int fd, char* filename, int filesize)
+{
+    int srcfd;
+    char *srcp, filetype[MAXLINE], buf[MAXBUF];
+
+    get_filetype(filename, filetype);
+    sprintf(buf, "HTTP/1.0 200 OK\r\n");
+    sprintf(buf, "%sServer: Tiny Web Server\r\n",buf);
+    sprintf(buf, "%sConnection: close\r\n", buf);
+    sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
+    sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
+    Rio_writen(fd, buf, strlen(buf));
+    printf("Response headers:\n");
+    printf("%s", buf);
+
+    srcfd = Open(filetype, O_RDONLY, 0);
+    srcp = (char*)Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+    close(srcfd);
+    Rio_writen(fd, srcp, filesize);
+    Munmap(srcp, filesize);
+}
+
+void get_filetype(char *filename, char* filetype)
+{
+    if(strstr(filename, ".html"))
+        strcpy(filetype, "text/html");
+    else if(strstr(filename, ".gif"))
+        strcpy(filetype, "image/gif");
+    else if(strstr(filename, ".png"))
+        strcpy(filetype, "image/png");
+    else if(strstr(filename, ".jpg"))
+        strcpy(filetype, "image/jpeg");
+    else
+        strcpy(filetype, "text/plain");
+
+}
+
+void serve_dynamic(int fd, char* filename, char* cgiargs)
+{
+    char buf[MAXLINE], *emptylist[] = {NULL};
+
+    sprintf(buf, "HTTP/1.0 200 OK\r\n");
+    Rio_writen(fd, buf, strlen(buf));
+    sprintf(buf, "Server: Tiny Web Server\r\n");
+    Rio_writen(fd, buf, strlen(buf));
+
+    if(Fork() == 0) { //Child
+        setenv("QUERY_STRING", cgiargs, 1);
+        Dup2(fd, STDOUT_FILENO);
+        Execve(filename, emptylist, environ);
+    }
+    Wait(NULL);
+}
+

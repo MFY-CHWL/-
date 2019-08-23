@@ -1,0 +1,531 @@
+并发：
+
+标准库对并发的支持：
+*内存模型：这是对内存并发访问的一组保证，主要是确保简单的普通访问能按人们的朴素预期工作。
+*对无锁编程的支持：这是一些避免数据竞争的细粒度底层机制。
+*一个线程库：这是一组支持传统线程-锁风格的系统级并发编程组件，如thread,condition_variable,mutex。
+*一个任务支持库：这是一些支持任务级并发编成的特性：future, promise, packaged_task和async()。
+
+底层到高层
+
+ifdef 内存模型：
+
+*内存位置
+c++内存模型保证两个更新和访问不同内存位置的线程可以互不影响地执行。
+
+*指令重排
+//线程1
+int x;
+bool x_init;
+
+void init()
+{
+	x = initialize();
+	x_init = true;
+}
+
+//线程2
+extern int x;
+extern bool x_init;
+
+void f2()
+{
+	int y;
+	while(!x_init)
+		this_thread::sleep_for(milliseconds{10});
+	y = x;
+}
+
+线程2可能永远都不会等待，从而将一个未初始化的x赋予y。
+
+*内存序
+术语内存序用来描述一个线程从内存访问一个值时会看到什么。
+最简单的内存序称为顺序一致性。在一个顺序一致性内存模型中，每个线程看到的是相同的操作执行效果，
+此顺序就像是所有指令都在单一线程中顺序执行一样。线程仍可重排指令，但对其他线程可以观察变量的每个时间点，时间点前执行的指令集合和观察到的内存位置的值必须是明确定义的且对所有线程都一致。“观察值”从而强制内存位置的一个一致性视图的操作被称为原子操作。
+
+*数据竞争
+如果两个线程同时访问同一个内存位置且至少其中之一是进行写操作时，它们就会产生数据竞争。
+
+endif
+
+ifdef 原子性
+无锁编程，就是一组用来编写不显式使用锁的并发程序的技术。
+不必忍受数据竞争的原语操作通常被称为原子操作，可用来实现高层并发机制，如锁，线程和无锁数据结构。
+
+*atomic类型
+
+atomic特性是为可映射到简单内置类型的类型设计的。若类型T的对象很大，则atomic<T>就可能用锁实现。模板参数T必须是可简单拷贝的。
+
+简单的共享计数器：
+template<typename T>
+class shared_ptr{
+public:
+	~shared_ptr()
+	{
+		if(--*puc) delete p;
+	}
+private:
+	T* p;
+	atomic<int>* puc;
+}
+
+
+atomic<int> val = 0;
+int expected = val.load();
+do{
+	int next = fct(expected);
+}while(!val.compare_exchange_weak(expected, next));
+若不成功，每次compare_exchange_weak()执行时expected已被更新为当前值，我们不会陷入无线循环。
+compare_exchange_weak() 也叫CAS(compare-and-swap)
+
+CAS操作有一个很严重的问题----ABA问题
+
+无锁单项链表，若data的值小于其头节点的data值，则在其头部添加一个新节点。
+
+extern atomic<Link*> head;   //链表的共享头指针
+
+Link* nh = new Link(data, nullptr); //创建一个节点插入到链表中
+Link* h  = head.load();             //读取链表的共享头节点
+do{
+	if(h->data < data) break;
+	nh->next = h;
+}while(!head.compare_exchage_weak(h,nh));
+用A表示读取的head值。
+在我读取A之后，某个其他线程讲head的值修改为B，并回收了Link。随后某个线程重用节点A并将其重新插入到链表的head。
+现在我调用compare_exchange_weak()会得到A并执行更新。但是，链表已经被修改了：head值从A变为B然后又变回A。
+
+
+双重检查锁范型：
+如果初始化某个x必须借助锁来进行，那么每次访问x都可能需要请求此锁来检测初始化是否完成，但你不想承担这种代价，可以仅当变量x_init为false的时候才使用锁并进行初始化。
+X x;                         //我们需要一个锁帮助初始化X
+mutex lx;		     //mutex用来在初始化期间锁住x
+
+atomic<bool> x_init{false};  //用一个atomic最小化锁
+
+void some_code()
+{
+	if(!x_init){
+		lx.lock();
+		if(!x_init){
+			//初始化x
+			x_init = true;
+		}
+		lx.unlock()'
+	}
+}
+
+假如x_init不是atomic，指令重排机制就可能将x的初始化放在检测x_init之前，因为两者显然是无关的。
+
+endif
+
+
+线程和任务：
+
+
+身份：
+每个执行线程都有唯一标识符，用thread::id类型的值表示，可以通过调用t.get_id()获得。
+如果一个thread不表示一个执行线程，则其id为默认的id{}。
+在下列情况下，一个thread的id可以是id{}:
+1.他并为被赋予一个任务
+2.他已经结束
+3.他已被移动
+4.他已被detach()
+----------------
+构造：
+void f0();
+void f1(int);
+
+thread t1{f0};
+thread t2{f1,1};
+thread构造完毕之后，一旦运行时系统能获取它运行所需的资源，他就开始执行任务。可以认为这个过程是“立即的”
+
+
+如果希望构建一组任务，将他们链接在一起。应该先将任务构造为函数对象，然后，在他们就绪之后启动thread.
+template<typename T>
+class Sync_queue<T>{  //一个队列，提供put()和get(),无数据竞争
+	//...	
+};
+
+struct Consumer{
+	Sync_queue<Message> &head;
+	Consumer(Sync_queue<Message>& q):head(q){}
+	void operator()();
+};
+
+struct Producer{
+	Sync_queue<Message>& tail;
+	Producer(Sync_queue<Message> &q): tail(q){}
+	void operator()();
+};
+
+Sync_queue<Message> mq;
+Consumer c{mq};
+Producer p{mq};
+
+thread pro{p};
+thread con{c};
+--------------
+析构
+thread的析构函数销毁thread对象，析构函数调用terminate()结束程序。
+---------------
+
+join()
+t.join()告诉当前thread在t结束之前不要继续前进。
+----------------
+detach()
+意外地令thread在析构函数执行后扔试图继续运行被认为是一个非常糟糕的错误。
+如果希望一个系统线程比起thread(句柄)活跃更久，应使用detach()。
+
+void run2()
+{
+	thread t{heartbeat};
+	t.detach();
+}
+
+警告
+void home() //不要这样做
+{
+	int var;
+	thread disater{[&]{this_thread::sleep_for(second{7.3});++var;}};
+	disater.detach();
+}
+违反了“不要将一个局部变量的指针传递出其作用域之外”在这个简单规则。
+推荐不使用detach();
+
+--------------
+名字空间this_thread
+void helper(thread &t)
+{
+	thread::id me{this_thread::get_id()};
+	if(t.get_id() != me) t.join();
+}
+
+-------------
+thread_local数据
+一个thread_local变量是一个thread专有的对象，除非其拥有者将它的指针提供给了其他线程。
+thread_loacl被一个thread的所有函数共享。thread_local对象可以使extern的。
+template<typename K, typename V>
+class Map{
+public:
+	Map();
+	static void set_default(const K&, V&);
+private:
+	static pair<const K,V> default_value;
+}
+
+static带来了潜在的数据竞争。
+线程1： Map<string,int>::set_default("Heraclides", 1);
+线程2:  Map<string,int>::set_default("Zeno", 1);
+static pair<const K,V> default_value -> static thread_local pair<const K,V> default_value
+就不会有潜在的数据竞争了，但是也不再共享
+
+
+避免数据竞争
+
+最好的办法是不再共享数据。
+不能的话：
+互斥量(mutex):是一个用来表示某个资源互斥访问权限的对象。
+条件变量(condition variable): 一个thread用条件变量等待另一个thread或计时器生成的事件。
+
+严格的说，条件变量不能防止数据竞争，而是帮我们避免引入可能引起数据竞争的共享数据。
+
+
+互斥量：
+mutex:           一个非递归互斥量：如果尝试获取一个已经被获取的mutex,thread会阻塞。
+recursive_mutex: 可被单个thread重复获取的互斥量。
+timed_mutex:     一个非递归互斥量，提供操作（只）在指定时长内尝试获取互斥量
+recursive_timed_mutex: 递归限时互斥量
+lock_guard<M>:   mutex M 的守卫
+unique_lock<M>:  mutex M 的锁
+
+被锁住的代码称为临界区，为了保持代码的高效性以及免受锁相关问题的困扰，应该尽量减小临界区。
+
+mutex不能拷贝或者移动。可以将mutex看作一种资源，而不是资源的句柄。实际上，mutex通常实现为系统资源的句柄，但由于这种系统资源不能共享，泄漏或移动，因此将他们分开考虑只是徒增复杂性。
+
+recursive_mutex cout_mutex;
+
+template<typename Arg, typename... Args>
+void write(Arg a, Args tail...)
+{
+	cout_mutex.lock();
+	cout << a;
+	write(tail...);
+	cout_mutex.unlock();
+}
+
+
+extern timed_mutex imtx;
+extern Image buf;
+void next()
+{
+	while(true){
+		Image next_image;
+		if(imtx.try_lock(milliseconds{100})){
+			buf = next_image;
+			imtx.unlock();
+		}
+	}
+}
+
+有时候会忘记释放锁
+用lock_guard
+void use(mutex& mtx, vector<string>& vs, int i)
+{
+	if(i<0) return;
+	string s;
+	{
+		lock_guard<mutex> g{mtx}; //最小化临界区
+		s = vs[i];
+	}
+}
+
+lock_guard的析构函数会释放锁,是一个非常简单的类
+lock_guard(以及unique_lock)是一种对象资源句柄("守卫"),可以对对象加锁获取所有权，解释来释放所有权。
+
+应使用	unique_lock
+mutex tex;
+timed_mutex mtx2;
+
+void use()
+{
+	unique_lock<mutex> lck{mtx};
+	unique_lock<timed_mutex> lck2{mtx2};
+	lck.try_lock_for(milliseconds{2});//wrong
+	lck2.try_lock_for(milliseconds{2});//right
+	lck2.try_lock_until(steady_clock::now()+milliseconds{2});
+}
+
+如果传递给unique_lock的构造函数一个duration或time_point作为第二个参数，构造函数会执行恰当的尝试加锁操作。
+timed_mutex mtx;
+
+void use()
+{
+	unique_lock<timed_mutex> lck{mtx2, milliseconds{2});
+	if(lck.owns_lock()){
+		//获取成功
+		//执行一些操作..
+	}
+	else {
+		//超时
+		//做一些其他操作
+	}
+}
+
+----------
+多重锁
+
+locks是一个或多个锁对象构成的序列lck1,lck2,lck3...
+x = try_lock(locks);  //尝试获取locks的所有成员，这些锁是按顺序获取的，若所有锁的成功获取，x=-1，否则x=n,其中n为不能获取的锁的数量，且不保有任何锁。
+lock(locks);
+
+
+void task(mutex& m1, mutex& m2)
+{
+	unique_lock lck1{m1, defer_lock_t};
+	unique_lock lck2{m2, defer_lock_t};
+	lock(lck1, lck2);
+}
+
+-----------
+call_once()
+
+
+我们通常希望初始化对象的时候不会产生数据竞争，为此，类型once_flag和函数call_once()提供了一种高效并简单的底层工具。
+once_flag f1{};		
+call_once(f1, f, args) 若f1未使用，调用f(args);
+
+class X{
+public:
+	X();
+private:
+	static once_flag  static_flag;
+	static Y static_data_for_class X;
+	static void init();
+};
+
+X::X()
+{
+	call_once(static_flag, init());
+}
+
+
+------------
+条件变量
+用条件变量管理thread间的通信。一个thread可等待(阻塞)在一个condition_variable上，直至发生某个事件，如到达一个特定时刻或者说另一个thread完成。
+
+生产者消费者
+template<typename T>
+class Sync_queue{
+public:
+	void put(const T& val);
+	void put(T&& val);
+	void get(T& val);
+private:
+	mutex mtx;
+	condition_variable cond;
+	list<T> q;
+};
+
+template<typename T>
+void Sync_queue::put(const T& val);
+{
+	lock_guard<mutex> lck(mtx);
+	q.push_back(val);
+	cond.notify_one();
+}
+
+template<typename T>
+void Sync_queue::get(T& val)
+{
+	unique_lock<mutex> lck(mtx);
+	cond.wait(lck, [this]{return !q.empty();});
+	val = q.front();
+	q.pop_front();
+}
+
+使用unique_lock而不是普通的lock_guard,因为lock_guard已经优化的非常简洁，不提供解锁和重新加锁Mutex所需要的操作。
+并且通过引用参数返回结果，以确保元素类型的拷贝构造函数能抛出异常的话，不会导致麻烦。
+
+基于任务的并发
+运行并发任务的机制：关键点是thread,避免数据竞争和thread同步。
+
+任务支持：
+packaged_task<F>	打包一个类型为F的可调用对象，作为任务运行
+promise<T>		一个对象，描述了接受类型为T的结果的目的
+future<T>		一个对象，描述了类型为T的结果的源
+shared_future<T>	一个future.可以从中多次读取类型为T的结果
+
+x = async(policy, f, args)	根据policy调用f(args)
+x = async(f, args)		根据默认调用
+
+res = task(args)
+-->并行版本 
+auto handle = async(task, args);
+res = handle.get();
+
+
+
+
+
+-----------
+future和promise
+
+任务1：future  <---- get()
+任务2: promise <---set_value(),set_exception();
+任务1 <---> 值 <---> 任务2
+
+
+promise没有拷贝操作，值是被移入，移出共享状态的，而不是进行拷贝，
+因此可以以很低的代价传输一组对象。
+
+promise<map<string,int>> pr;
+map<string,int> m;
+pr.set_value(m);
+任务随后即可从对应future提取map,而代价基本为0。
+
+--------------
+packaged_task
+packaged_task保存了一个任务和一个future/promise对
+
+任务1：future  <---- get()
+任务2: promise <---set_value() <---- return x;
+       promise <---set_exception() <---- throw x;
+任务1 <---> 值 <---> 任务2
+
+int ff(int i)
+{
+	if(i) return i;
+	throw runtime_error("ff(0)");
+}
+
+packaged_task<int(int)> pt1{ff};
+packaged_task<int(int)> pt2{ff};
+
+pt1(1);
+pt2(0);
+
+auto v1 = pt1.get_future();
+auto v2 = pt2.get_future();
+
+try{
+	cout << v1.get() << endl;
+	cout << v2.get() << endl;
+}
+catch(exception& e){
+	cout << "exception:" << e.what() << endl;
+}
+
+packaged_task版本与普通函数调用版本的工作方式完全一样。
+
+
+---------
+future
+future就是共享状态的句柄，他是promise存放结果的地方
+
+如果尝试对一个future get两次，其结果是未定义的。
+如果希望反复读取结果值，或是可能有多个读者读取结果，就必须拷贝他，然后读取副本。
+这正是shared_future所做的，每个可用的shared_future都是通过直接或间接地从具有相同结果类型的future中移出值来进行初始化。
+
+------
+async()
+
+double square(int i) { return i*i; }
+future<double> fd = async(square, 2);
+double d = fd.get();
+
+一个并行find()示例
+extern vector<Record> goods;
+template<typename Pred>
+Record* find_rec(vector<Record>& vr, int first, int last, Pred pr)
+{
+	vector<Record>::iterator p = std::find_if(vr.begin()+first, vr.begin()+last, pr);
+	if(p == vr.begin()+last)
+		return nullptr;
+	return &*p;
+}
+
+const grain = 50000;
+
+template<typename Pred>
+Record* pfind(vector<Record>& vr, Pred pr)
+{
+	assert(vr.size()%grain==0);
+
+	vector<future<Record*>> res;
+	
+	for(int i=0;i!=vr.size();i+=grain)
+		res.push_back(async(find_rec<Pred>,ref(vr),i,i+grain,pr));
+	
+	for(int i=0;i!=res.size();++i_
+		if(auto p = res[i].get())
+			return p;
+	
+	return nullptr;
+}
+
+void find_cheap_red()
+{
+	assert(goods.size()%grain==0);
+	
+	Record* p = pfind(goods, [](Record& r){ return r.price < 200 && r.color == Color::red;});
+
+	cout << "record" << *p << '\n';
+}
+
+update1:不必按顺序等待每个任务完成，尝试按任务完成的顺序查看结果
+template<typename Pred>
+Record* pfind_any(vector<Record>& vr, Pred pr)
+{
+	vector<future<Record*>> res;
+	for(int i=0; i!=vr.size(); i+=grain)
+		res.push_back(async(find_rec<Pred>,ref(vr),i,i+grain,pr));
+	for(int count=res.size();count;--count){
+		int i = wait_for_any(res,microseconds{10});
+		if(auto p = res[i].get())
+			return p;	
+	}
+	return nullptr;
+}
+
+
+
