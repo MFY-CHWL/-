@@ -1,0 +1,369 @@
+如果逻辑控制流在时间上重叠，那么他们就是并发的
+
+*访问慢速I/O设备
+交替执行IO请求和其他有用的工作来利用并发
+
+*与人交互
+和计算机交互的人要求计算机有同时执行多个任务的能力。
+例如，打印文档的同时调整窗口大小。
+每次用户请求某种操作时，一个独立的并发逻辑流被创建来执行这个操作。
+
+*通过推迟工作以降低延迟
+一个动态内存分配器可以通过推迟合并，将它放在一个运行在较低优先级上的并发“合并”流中，在有空闲的CPU周期时充分利用这些空闲周期，从而降低单个free操作的延迟。
+
+*服务多个网络客户端
+并发服务器，为每个客户创建一个单独的逻辑流。
+
+*在多核机器上进行并行运算
+被划分成并发流的应用程序通常在多核机器上比在单处理器机器上运行得快，因为这些流会并行执行，而不是交错执行。
+
+现代操作系统提供了三种基本的构造并发程序的方法：
+1)进程：
+每个逻辑流都是一个进程，由内核来调度和维护。因为进程有独立的虚拟地址空间，想要和其他流通信，控制流必须使用某种显式的进程间通信机制。
+
+2)I/O多路复用：
+应用程序在一个进程的上下文中显式地调度它们自己的逻辑流。逻辑流被模型化为状态机，数据到达文件描述符后，主程序显式地从一个状态转换到另一个状态。因为程序是一个单独的进程，所以所有的流都共享同一个地址空间。
+
+3)线程：
+线程是运行在一个单一进程上下文中的逻辑流，由内核进行调度。
+像进程流一样由内核进行调度，而像I/O多路复用流一样共享同一个虚拟地址空间。
+
+
+1.基于进程的并发编程
+fork, exec, waitpid.
+
+1.1基于进程的并发服务器
+#include "csapp.h"
+void echo(int connfd);
+
+void sigchld_handler(int sig)
+{
+	while(waitpid(-1,0,WNOHANG) > 0)
+		;
+	return;
+}
+
+int main(int argc, char **argv)
+{
+	int listenfd, connfd;
+	socklen_t  clientlen;
+	struct sockaddr_storage clientaddr;
+	
+	if(argc != 2) {
+		fprintf(stderr, "usage: %s <port>\n", argv[0]);
+		exit(0);
+	}
+	
+	Singal(SIGCHLD, sigchld_handler);
+	listenfd = open_listenfd(argv[1]);
+	while(1) {
+		clientfd = sizeof(struct sockaddr_storage);
+		connfd = accept(listenfd, (SA*)&clientaddr, &clientlen);
+		if(Fork() == 0) {
+			close(listenfd);
+			echo(connfd);
+			close(connfd);
+			exit(0);
+		}
+		close(connfd);
+	}
+}
+
+1.2进程的优劣
+对于在父子进程间共享状态信息，进程有一个非常清晰的模型：共享文件表，但不共享用户地址空间。
+有独立地址空间的有点在于一个进程不可能不小心覆盖另一个进程的虚拟内存。
+另一方面，独立的地址空间使得进程共享状态信息变得更加困难，为了共享信息，它们必须使用显式的IPC机制。它们往往比较慢，因为进程控制和IPC开销很高。
+
+waitpid函数和信号是基本的IPC机制，它们允许进程发送小消息到同一台主机上的其他进程。套接字是IPC的一种重要形式，它允许不同主机上的进程交换任意的字节。Unix IPC通常指的是所有允许进程和同一台主机上其他进程进行通信的技术。其中包括管道，先进先出，系统V共享内存，以及系统V信号量。
+
+2.基于I/O多路复用的并发编程
+
+#include "csapp.h"
+void echo(int connfd);
+void command(void);
+
+int main(int argc, char **argv)
+{
+	int listenfd, connfd;
+	socklen_t clientfd;
+	struct sockaddr_storage clientaddr;
+	fd_set read_set, ready_set;
+	
+	if(argc != 2) {
+		fprintf(stderr, "usage: %s <port>\n", argv[0]);
+		exit(0);
+	}
+	listenfd = open_listenfd(argv[1]);
+
+	FD_ZERO(&read_set);
+	FD_SET(STDIN_FILENO, &read_set);
+	FD_SET(listenfd, &read_set);
+
+	while(1) {
+		ready_set = read_set;
+		select(listenfd+1, &ready_set, NULL, NULL, NULL);
+		if(FD_ISSET(STDIN_FIFENO, &ready_set) 	
+			command();
+		if(FD_ISSET(listenfd, &ready_set)) {
+			clientlen = sizeof(struct sockaddr_storage);
+			connfd = accept(listenfd, (SA*)&cilentaddr, &clientlen);
+			echo(connfd);
+			close(connfd);
+		}
+	}
+}
+
+void command(void) {
+	char buf[MAXLINE];
+	if(!fgets(buf, MAXLINE, stdin))
+		exit(0);
+	printf("%s", buf);
+}
+
+2.1基于I/O多路复用的并发事件驱动服务器
+I/O多路复用可以用做并发事件驱动程序的基础。
+一般的思路是将逻辑流模型化为状态机，一个状态机就是一组状态，输入事件和转移。
+每个转移是将一个（输入状态，输入事件）对映射到一个输出状态。
+
+#include "csapp.h"
+
+typedef struct {
+    int maxfd;
+    fd_set read_set;
+    fd_set ready_set;
+    int nready;
+    int maxi;
+    int clientfd[FD_SETSIZE];
+    rio_t clientrio[FD_SETSIZE];
+} pool;
+
+int byte_cnt = 0;
+
+void init_pool(int listenfd, pool *p)
+{
+    int i;
+    p->maxi = -1;
+    for(i=0; i<FD_SETSIZE; ++i)
+        p->clientfd[i] = -1;
+    p->maxfd = listenfd;
+    FD_ZERO(&p->read_set);
+    FD_SET(listenfd, &p->read_set);
+}
+
+void add_client(int connfd, pool *p)
+{
+    int i;
+    p->nready--;
+    for(i=0; i<FD_SETSIZE; ++i){
+        if(p->clientfd[i] < 0) {
+            p->clientfd[i] = connfd;
+            Rio_readinitb(&p->clientrio[i], connfd);
+
+            FD_SET(connfd, &p->read_set);
+            if(connfd > p->maxfd)
+                p->maxfd = connfd;
+            if(i > p->maxi)
+                p->maxi = i;
+            break;
+        }
+    }
+    if(i == FD_SETSIZE)
+        app_error("add_client error: Too many clients");
+}
+
+void check_clients(pool *p){
+    int i, connfd, n;
+    char buf[MAXLINE];
+    rio_t rio;
+
+    for(i=0; i<=p->maxi && p->nready>0; ++i){
+        connfd = p->clientfd[i];
+        rio = p->clientrio[i];
+
+        if((connfd>0) && (FD_ISSET(connfd, &p->ready_set))) {
+            p->nready--;
+            if((n = Rio_readlineb(&rio, buf, MAXLINE)) != 0) {
+                byte_cnt += n;
+                printf("Server received %d (%d total) bytes on fd on %d\n",
+                        n, byte_cnt, connfd);
+                Rio_writen(connfd, buf, n);
+            }
+            else {
+                close(connfd);
+                FD_CLR(connfd, &p->read_set);
+                p->clientfd[i] = -1;
+            }
+        }
+    }
+}
+
+int main(int argc, char **argv)
+{
+    int listenfd, connfd;
+    socklen_t clientlen;
+    struct sockaddr_storage clientaddr;
+    static pool pool;
+
+    if(argc != 2) {
+        fprintf(stderr, "usage: %s <port>\n",argv[0]);
+        exit(0);
+    }
+
+    listenfd = Open_listenfd((long)argv[1]);
+    init_pool(listenfd, &pool);
+
+    while(1) {
+        pool.ready_set = pool.read_set;
+        pool.nready = Select(pool.maxfd+1, &pool.ready_set, NULL, NULL, NULL);
+
+        if(FD_ISSET(listenfd, &pool.ready_set)) {
+            clientlen = sizeof(struct sockaddr_storage);
+            connfd = accept(listenfd, (SA*)&clientaddr, &clientlen);
+            add_client(connfd, &pool);
+        }
+
+        check_clients(&pool);
+    }
+}
+
+
+2.2 I/O多路复用技术的优劣
+
+优点：
+1）比基于进程的设计给了程序员更多的对程序行为的控制。例如，我们可以设想编写一个事件驱动的并发服务器，为某些客户端提供它们所需要的服务，而这对于基于进程的并发服务器来说，是很困难的。
+
+2）一个基于I/O多路复用的事件驱动服务器是运行在单一进程上下文中的，因此每个逻辑流都能访问该 进程的全部地址空间，这使得在流之间共享数据变得很容易。
+
+3)事件驱动设计常常比基于进程的设计高效得多，它们不需要进行进程上下文切换来调度新的流。
+
+缺点：
+1)编码复杂
+
+2)不能充分利用多核处理器
+
+
+3.基于线程的并发编程
+基于线程的并发是以上两种的混合，既有自己私有的地址空间，又能共享整个地址空间。
+
+线程就是运行在进程上下文的逻辑流。
+每个线程都有它自己的线程上下文，包括一个唯一的整数线程ID,栈，栈指针，程序计数器，通用目的寄存器和条件码。
+
+3.1线程并行模型
+主线程和其他线程的区别仅在于它总是线程中第一个运行的程序。
+线程池概念的主要影响是，一个线程可以杀死它的任何对等线程，或者等待它的任意对等线程终止。
+
+3.2Posix线程
+Posix线程(Pthreads)是在C程序中处理线程的一个标准接口。
+
+每个线程例程都以一个通用指针作为输入，并返回一个通用指针，如果想传递多个参数给线程例程，那么应该将参数放到一个结构中，并传递一个指向该结构的指针。
+void *thread(void *vargp);
+
+3.3创建线程
+#include <pthread.h>
+typedef void *(func)(void *);
+
+int pthread_create(pthread_t *tid, pthread_attr_t *attr, func *f, void *arg);
+tid线程ID,arg输入变量，f线程例程方法，attr参数用来改变新建线程的默认属性
+
+pthread_t pthread_self(void);
+返回调用者的线程ID
+
+
+3.4终止线程
+
+*当顶层的线程例程返回时，线程会隐式地终止。
+
+*通过调用pthread_exit函数，线程会显式地终止，如果主线程调用pthread_exit，她会等待所有其他对等线程终止，然后在终止主线程和整个进程，返回值为thread_return;
+void pthread_exit(void *thread_return);
+
+*某个对等线程调用linux的exit函数，该函数终止进程以及所有与该进程相关的线程
+
+*另一个对等线程通过以当前线程ID作为参数调用pthread_cancel函数来终止当前线程。
+int pthread_cancel(pthread_t tid);
+若成功则返回0,若出错则为非零。
+
+3.5回收已终止线程的资源
+int pthread_join(pthread_t tid, void **threaad_return);
+成功返回0,出错为非零
+
+pthread_join函数会阻塞，直到线程tid终止，将线程例程返回的通用(void*)指针赋值为threaed_return指向的位置，然后回收已终止线程占用的所有内存资源。
+
+3.6分离线程
+线程是可结合的或者是可分离的。
+一个可结合的线程能够被其他线程收回和杀死。
+一个分离的线程是不能被其他线程收回和杀死。
+
+为了避免内存泄漏，每个可结合线程都应该要么被其他线程显示地收回，要么通过调用pthread_detach分离
+
+int pthread_detach(pthread_t tid);
+若成功返回0,出错返回非0
+
+3.7初始化线程
+pthread_once函数允许初始化与线程例程相关的状态。
+
+pthread_once_t once_control = PTHREAD_ONCE_INIT;
+int pthread_once(pthread_once_t *once_control,
+		void (*init_routine)(void));
+
+3.8基于线程的并发服务器
+#include "csapp.h"
+
+void echo(int connfd);
+void *thread(void *vargp);
+
+int main(int argc, char **argv)
+{
+    int listenfd, *connfdp;
+    socklen_t clientlen;
+    struct sockaddr_storage clientaddr;
+    pthread_t tid;
+
+    if(argc != 2) {
+        fprintf(stderr, "usage: %s <port>\n", argv[0]);
+        exit(0);
+    }
+    listenfd = Open_listenfd((long)argv[1]);
+
+    while(1){
+        clientlen = sizeof(struct sockaddr_storage);
+        connfdp = (int*)Malloc(sizeof(int));
+        *connfdp = accept(listenfd, (SA*)&clientaddr, &clientlen);
+        Pthread_create(&tid,NULL,thread,connfdp);
+    }
+}
+
+void *thread(void *vargp)
+{
+    int connfd = *((int *)vargp);
+    Pthread_detach(pthread_self());
+    Free(vargp);
+    echo(connfd);
+    close(connfd);
+    return NULL;
+}
+
+注意点：
+1.accept处有数据竞争
+2.Pthread_detach()的使用来释放内存
+3.只需要关闭一次connfd,这是因为线程使用已连接描述符不会引起引用计数+1.
+
+
+4.信号量同步线程
+4.1信号量
+
+信号量s是具有非负整数值的全局变量，只能由两种特殊的操作来处理，这两种操作称为P和V。
+P(s):如果s非0，减一返回，否则挂起直至s非零。
+V(s):V操作将s加一。唤醒等待的线程
+
+信号量有一个信号量不变性属性
+Posix标准定义了许多操作信号量的函数
+#include <semaphore.h>
+
+int sem_init(sem_t *sem, 0, unsigned int value);
+int sem_wait(sem_t *s);    //P(s)
+int sem_post(sem_t *s);	   //V(s)
+
+4.1用信号量来实现互斥
+
+
+
